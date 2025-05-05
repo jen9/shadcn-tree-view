@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useRef } from "react";
 import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import { ChevronRight } from "lucide-react";
 import { cva } from "class-variance-authority";
-import { cn, flattenTree } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { TreeDataItem } from "@/types";
+import useTreeKeyboardNavigation from "@/hooks/useTreeKeyboardNavigation";
+
 const treeVariants = cva(
   "group hover:before:opacity-100 before:absolute before:rounded-lg before:left-0 px-2 before:w-full before:opacity-0 before:bg-accent/70 before:h-[2rem] before:-z-10"
 );
@@ -24,202 +26,125 @@ type TreeProps = React.HTMLAttributes<HTMLDivElement> & {
   defaultNodeIcon?: any;
   defaultLeafIcon?: any;
   onDocumentDrag?: (sourceItem: TreeDataItem, targetItem: TreeDataItem) => void;
-  ref: React.RefObject<HTMLDivElement | null>;
 };
 
-// Custom hook for keyboard navigation
-function useTreeKeyboardNavigation(
-  ref: React.RefObject<HTMLDivElement>,
-  data: TreeDataItem[] | TreeDataItem,
-  handleSelectChange: (item: TreeDataItem | undefined) => void,
-  setExpandedItemIds: React.Dispatch<React.SetStateAction<string[]>>
-) {
-  React.useEffect(() => {
-    const dataArray = Array.isArray(data) ? data : [data];
-    const flatDataArray = flattenTree(dataArray);
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      console.log("useTreeKeyboardNavigation");
-      const activeElement = document.activeElement as HTMLElement | null;
-      if (!activeElement) return;
-      if (!ref?.current?.contains(activeElement)) return; // if the active element is not inside the tree, return
-
-      const focusableElements = ref?.current?.querySelectorAll(
-        "[data-focusable]"
-      ) as NodeListOf<HTMLElement>;
-
-      if (!focusableElements || focusableElements.length === 0) return;
-
-      const currentIndex = Array.from(focusableElements).indexOf(activeElement);
-
-      const currentItemDom = focusableElements[currentIndex] || null;
-      const currentItemId = currentItemDom?.getAttribute("data-item-id");
-      const currentItem = flatDataArray.find(
-        (item) => item?.id === currentItemId
-      );
-
-      switch (event.key) {
-        case "ArrowUp": {
-          let elementToFocus: HTMLElement;
-          if (currentIndex > 0) {
-            elementToFocus = focusableElements[currentIndex - 1];
-          } else {
-            elementToFocus = focusableElements[focusableElements.length - 1];
-          }
-          elementToFocus?.focus();
-          const elementToFocusId = elementToFocus?.getAttribute("data-item-id");
-          const elementToFocusItem = flatDataArray.find(
-            (item) => item.id === elementToFocusId
-          );
-          handleSelectChange(elementToFocusItem);
-          break;
-        }
-        case "ArrowDown": {
-          let elementToFocus: HTMLElement;
-          if (currentIndex < focusableElements.length - 1) {
-            elementToFocus = focusableElements[currentIndex + 1];
-          } else {
-            elementToFocus = focusableElements[0];
-          }
-          elementToFocus?.focus();
-          const elementToFocusId = elementToFocus?.getAttribute("data-item-id");
-          const elementToFocusItem = flatDataArray.find(
-            (item) => item.id === elementToFocusId
-          );
-          handleSelectChange(elementToFocusItem);
-          break;
-        }
-        case "ArrowLeft":
-          if (currentItem) {
-            setExpandedItemIds((items) =>
-              items.filter((id) => id !== currentItem.id)
-            );
-          }
-          break;
-        case "ArrowRight":
-          if (currentItem) {
-            setExpandedItemIds((items) => [...items, currentItem.id]);
-          }
-          break;
-        default:
-          break;
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [data, handleSelectChange, ref, setExpandedItemIds]);
-}
-
-const TreeView = ({
-  data,
-  initialSelectedItemId,
-  onSelectChange,
-  expandAll,
-  defaultLeafIcon,
-  defaultNodeIcon,
-  className,
-  onDocumentDrag,
-  ref,
-  ...props
-}: TreeProps) => {
-  const [selectedItemId, setSelectedItemId] = React.useState<
-    string | undefined
-  >(initialSelectedItemId);
-
-  const [draggedItem, setDraggedItem] = React.useState<TreeDataItem | null>(
-    null
-  );
-
-  const handleSelectChange = React.useCallback(
-    (item: TreeDataItem | undefined) => {
-      setSelectedItemId(item?.id);
-      if (onSelectChange) {
-        onSelectChange(item);
-      }
+const TreeView = React.forwardRef<HTMLDivElement, TreeProps>(
+  (
+    {
+      data,
+      initialSelectedItemId,
+      onSelectChange,
+      expandAll,
+      defaultLeafIcon,
+      defaultNodeIcon,
+      className,
+      onDocumentDrag,
+      ...props
     },
-    [onSelectChange]
-  );
+    ref
+  ) => {
+    const innerRef = useRef<HTMLDivElement | null>(null);
 
-  const [expandedItemIds, setExpandedItemIds] = React.useState<string[]>(() => {
-    if (!initialSelectedItemId) {
-      return [] as string[];
-    }
+    React.useImperativeHandle(ref, () => innerRef.current as HTMLDivElement);
 
-    const ids: string[] = [];
+    const [selectedItemId, setSelectedItemId] = React.useState<
+      string | undefined
+    >(initialSelectedItemId);
 
-    function walkTreeItems(
-      items: TreeDataItem[] | TreeDataItem,
-      targetId: string
-    ) {
-      if (items instanceof Array) {
-        for (let i = 0; i < items.length; i++) {
-          ids.push(items[i]!.id);
-          if (walkTreeItems(items[i]!, targetId) && !expandAll) {
+    const [draggedItem, setDraggedItem] = React.useState<TreeDataItem | null>(
+      null
+    );
+
+    const handleSelectChange = React.useCallback(
+      (item: TreeDataItem | undefined) => {
+        setSelectedItemId(item?.id);
+        if (onSelectChange) {
+          onSelectChange(item);
+        }
+      },
+      [onSelectChange]
+    );
+
+    const [expandedItemIds, setExpandedItemIds] = React.useState<string[]>(
+      () => {
+        if (!initialSelectedItemId) {
+          return [] as string[];
+        }
+
+        const ids: string[] = [];
+
+        function walkTreeItems(
+          items: TreeDataItem[] | TreeDataItem,
+          targetId: string
+        ) {
+          if (items instanceof Array) {
+            for (let i = 0; i < items.length; i++) {
+              ids.push(items[i]!.id);
+              if (walkTreeItems(items[i]!, targetId) && !expandAll) {
+                return true;
+              }
+              if (!expandAll) ids.pop();
+            }
+          } else if (!expandAll && items.id === targetId) {
             return true;
+          } else if (items.children) {
+            return walkTreeItems(items.children, targetId);
           }
-          if (!expandAll) ids.pop();
         }
-      } else if (!expandAll && items.id === targetId) {
-        return true;
-      } else if (items.children) {
-        return walkTreeItems(items.children, targetId);
+
+        walkTreeItems(data, initialSelectedItemId);
+        return ids;
       }
-    }
+    );
 
-    walkTreeItems(data, initialSelectedItemId);
-    return ids;
-  });
+    // Use the custom hook for keyboard navigation
+    useTreeKeyboardNavigation({
+      ref: ref as React.RefObject<HTMLDivElement>,
+      data,
+      handleSelectChange,
+      setExpandedItemIds,
+    });
 
-  // Use the custom hook for keyboard navigation
-  useTreeKeyboardNavigation(
-    ref as React.RefObject<HTMLDivElement>,
-    data,
-    handleSelectChange,
-    setExpandedItemIds
-  );
+    const handleDragStart = React.useCallback((item: TreeDataItem) => {
+      setDraggedItem(item);
+    }, []);
 
-  const handleDragStart = React.useCallback((item: TreeDataItem) => {
-    setDraggedItem(item);
-  }, []);
+    const handleDrop = React.useCallback(
+      (targetItem: TreeDataItem) => {
+        if (draggedItem && onDocumentDrag && draggedItem.id !== targetItem.id) {
+          onDocumentDrag(draggedItem, targetItem);
+        }
+        setDraggedItem(null);
+      },
+      [draggedItem, onDocumentDrag]
+    );
 
-  const handleDrop = React.useCallback(
-    (targetItem: TreeDataItem) => {
-      if (draggedItem && onDocumentDrag && draggedItem.id !== targetItem.id) {
-        onDocumentDrag(draggedItem, targetItem);
-      }
-      setDraggedItem(null);
-    },
-    [draggedItem, onDocumentDrag]
-  );
-
-  return (
-    <div className={cn("overflow-hidden relative p-2", className)}>
-      <TreeItem
-        data={data}
-        ref={ref}
-        selectedItemId={selectedItemId}
-        handleSelectChange={handleSelectChange}
-        expandedItemIds={expandedItemIds}
-        setExpandedItemIds={setExpandedItemIds}
-        defaultLeafIcon={defaultLeafIcon}
-        defaultNodeIcon={defaultNodeIcon}
-        handleDragStart={handleDragStart}
-        handleDrop={handleDrop}
-        draggedItem={draggedItem}
-        {...props}
-      />
-      <div
-        className="w-full h-[48px]"
-        onDrop={(e) => {
-          handleDrop({ id: "", name: "parent_div" });
-        }}
-      ></div>
-    </div>
-  );
-};
+    return (
+      <div className={cn("overflow-hidden relative p-2", className)}>
+        <TreeItem
+          data={data}
+          ref={innerRef}
+          selectedItemId={selectedItemId}
+          handleSelectChange={handleSelectChange}
+          expandedItemIds={expandedItemIds}
+          setExpandedItemIds={setExpandedItemIds}
+          defaultLeafIcon={defaultLeafIcon}
+          defaultNodeIcon={defaultNodeIcon}
+          handleDragStart={handleDragStart}
+          handleDrop={handleDrop}
+          draggedItem={draggedItem}
+          {...props}
+        />
+        <div
+          className="w-full h-[48px]"
+          onDrop={(e) => {
+            handleDrop({ id: "", name: "parent_div" });
+          }}
+        ></div>
+      </div>
+    );
+  }
+);
 TreeView.displayName = "TreeView";
 
 type TreeItemProps = TreeProps & {

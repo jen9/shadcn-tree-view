@@ -7,8 +7,10 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function flattenTree(items: TreeDataItem[]): TreeDataItem[] {
-  return items.flatMap((item) => [
-    item,
-    ...(item.children ? flattenTree(item.children) : []),
-  ]);
+  return items
+    .map((item: TreeDataItem) => [
+      item,
+      ...(item.children ? flattenTree(item.children) : []),
+    ])
+    .reduce((acc, val) => acc.concat(val), []);
 }
